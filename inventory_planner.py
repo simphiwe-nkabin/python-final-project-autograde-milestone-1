@@ -1,204 +1,253 @@
 # inventory_planner.py
-import sys
-import os
-# ensure local module imports work in VS Code / Pylance
-# (Needed for 'from ingredient_class import...')
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 import csv
 from ingredient_class import Ingredient, InsufficientStockError, RECIPES
 
 INVENTORY_FILE = 'inventory.csv'
 HEADER = ['Name', 'Quantity', 'Unit']
 
-
 def load_inventory():
-    """Load inventory from INVENTORY_FILE. Merge duplicates by (name, unit)."""
+    """
+    Loads ingredients from the CSV file.
+      
+    Returns:
+      list[Ingredient].
+    Notes:
+      Warn on missing/extra headers; merge duplicates by (name, unit).
+    """
     inventory = []
+    # TODO: Implement load logic using csv.reader, handle conversion/errors
     try:
-        with open(INVENTORY_FILE, newline='', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            try:
-                headers = next(reader)
-            except StopIteration:
-                # File is empty except maybe header
-                return inventory
+        with open(INVENTORY_FILE, mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+
+            # Checking if there are header issues
+            file_headers = reader.fieldnames
+            if file_headers is None:
+                print(f" File '{INVENTORY_FILE}' is empty or corrupted.")
+                return []
+
+            missing_headers = [h for h in HEADER if h not in file_headers]
+            extra_headers = [h for h in file_headers if h not in HEADER]
+            if missing_headers:
+                print(f"Missing headers: {missing_headers}")
+            if extra_headers:
+                print(f"Extra headers in CSV: {extra_headers}")
 
             merged = {}
-            for row in reader:
-                if len(row) < 3:
-                    # skip malformed rows
-                    continue
-                name, qty, unit = row[0].strip(), row[1].strip(), row[2].strip()
-                if not name or not unit:
-                    continue
-                try:
-                    qty_val = float(qty)
-                except Exception:
-                    # skip rows with bad quantities
-                    print(f"Skipping row with invalid quantity: {row}")
-                    continue
 
-                key = (name.lower(), unit.lower())
-                if key in merged:
-                    merged[key].quantity += qty_val
-                else:
-                    merged[key] = Ingredient(name, qty_val, unit)
+            for row in reader:
+                try:
+                    name = row.get('Name', '').strip()
+                    quantity = float(row.get('Quantity', 0))
+                    unit = row.get('Unit', '').strip()
+
+                    key = (name.lower(), unit.lower())
+
+                    if key in merged:
+                        merged[key].quantity += quantity
+                    else:
+                        merged[key] = Ingredient(name, quantity, unit)
+
+                except ValueError:
+                    print(f"Skipping invalid row (non-numeric quantity): {row}")
+                except Exception as e:
+                    print(f"Error reading row {row}: {e}")
 
             inventory = list(merged.values())
+
     except FileNotFoundError:
-        print(f"{INVENTORY_FILE} not found. Starting with empty inventory.")
+        print(f"'{INVENTORY_FILE}' not found. Returning empty inventory.")
+        return []
     except Exception as e:
-        print(f"Error loading inventory: {e}")
+        print(f"Error reading '{INVENTORY_FILE}': {e}")
     return inventory
 
-
 def save_inventory(inventory):
-    """Write inventory to INVENTORY_FILE (overwrite)."""
+    """
+    Saves the current inventory to CSV.
+      
+    Args:
+      inventory: list[Ingredient] to persist (one row per item via to_csv_row()).
+    """
+    # TODO: Implementing save logic using csv.writer and Ingredient.to_csv_row()
     try:
-        with open(INVENTORY_FILE, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
+        with open(INVENTORY_FILE, mode='w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
             writer.writerow(HEADER)
-            for ing in inventory:
-                # attempt to write sensible values
-                name = getattr(ing, 'name', '')
-                qty = getattr(ing, 'quantity', '')
-                unit = getattr(ing, 'unit', '')
-                writer.writerow([name, qty, unit])
+
+            for item in inventory:
+                writer.writerow(item.to_csv_row())
+
+        print(f"Inventory successfully saved to '{INVENTORY_FILE}'.")
+
     except Exception as e:
         print(f"Error saving inventory: {e}")
 
-
 def add_ingredient(inventory):
-    """Prompt user to add an ingredient. Validate inputs and merge duplicates."""
-    name = input("Ingredient name: ").strip()
+    """
+    Prompt the user for a new ingredient and add it to the given inventory.
+
+    Args:
+      inventory: list[Ingredient] to mutate.
+    Returns:
+        None
+    """
+    name = input("Enter ingredient name: ").strip()
     if not name:
-        print("Name cannot be empty. Aborting add.")
+        print("Ingredient name cannot be empty.")
         return
 
-    qty_input = input("Quantity (number): ").strip()
-    try:
-        qty = float(qty_input)
-    except Exception:
-        print("Quantity must be a number. Aborting add.")
-        return
-
-    unit = input("Unit (e.g. g, kg, pcs): ").strip()
+    unit = input("Enter unit (e.g., g, ml, pcs): ").strip()
     if not unit:
-        print("Unit cannot be empty. Aborting add.")
+        print("Unit cannot be empty.")
         return
 
-    # merge with existing if same name & unit (case-insensitive check)
+    try:
+        quantity = float(input("Enter quantity: ").strip())
+    except ValueError:
+        print("Invalid quantity. Please enter a numeric value.")
+        return
+
+    # Checks for duplicate (same name + unit for ingredients)
     for ing in inventory:
         if ing.name.lower() == name.lower() and ing.unit.lower() == unit.lower():
-            print(f"Found existing ingredient: {ing.name} ({ing.quantity} {ing.unit})")
-            choice = input("Add quantity to existing item? (y/n): ").strip().lower()
-            if choice == 'y':
-                try:
-                    ing.quantity += qty
-                except Exception:
-                    # fallback: replace quantity if addition fails
-                    ing.quantity = float(qty)
-                print("Quantity updated.")
-            else:
-                print("Did not add.")
+            print(f"    Ingredient '{name}' ({unit}) already exists in inventory.")
+            try:
+                merge_choice = input("Do you want to update the quantity? (y/n): ").strip().lower()
+                if merge_choice == 'y':
+                    ing.quantity += quantity
+                    print(f"    Updated quantity of '{name}' to {ing.quantity} {unit}.")
+                else:
+                    print(" No changes made.")
+            except Exception:
+                print(" Could not update existing ingredient.")
             return
 
-    # not found -> add new
-    inventory.append(Ingredient(name, qty, unit))
-    print("Ingredient added.")
+    # Add new ingredient
+    try:
+        new_ing = Ingredient(name, quantity, unit)
+        inventory.append(new_ing)
+        print(f"    Added {new_ing}")
+    except ValueError as e:
+        print(f"    Error: {e}")
 
 
 def view_inventory(inventory):
-    """Display the inventory in a simple numbered list."""
+    """
+    Display the current inventory.
+      
+    Args:
+        inventory: list[Ingredient] to display.
+    Returns:
+        None
+    """
     if not inventory:
-        print("Inventory is empty.")
+        print(" Inventory is empty.")
         return
-    print("\nCurrent inventory:")
-    for i, ing in enumerate(inventory, start=1):
-        try:
-            # Use the Ingredient's __str__ method for nice formatting
-            print(f"{i}. {ing}") 
-        except Exception:
-            print(f"{i}. (invalid ingredient object)")
+
+    print("\n*** Current Inventory ***")
+    for idx, item in enumerate(inventory, start=1):
+        print(f"{idx}. {item}")
     print("")
-
-
 def check_recipe(inventory):
     """
-    Let user choose a recipe (from RECIPES) and check if inventory has enough.
-    If shortages exist, raise InsufficientStockError with a summary.
-    """
-    if not RECIPES:
-        print("No recipes available to check.")
-        return
+    Checks if there are enough ingredients for a chosen recipe.
 
-    print("Available recipes:")
+    Args:
+      inventory: list[Ingredient] to check against.
+    Returns:
+        None
+    """
+
+    print("\nAvailable Recipes:")
     for name in RECIPES.keys():
         print(f" - {name}")
 
-    recipe_name = input("Enter recipe name to check: ").strip().title()
-    recipe_needed = RECIPES.get(recipe_name)
+    user_input = input("\nEnter recipe name to check: ").strip().lower()
 
-    if recipe_needed is None:
-        print("Recipe not found.")
+    recipe_name = None
+    for name in RECIPES.keys():
+        if name.lower() == user_input:
+            recipe_name = name
+            break
+
+    if recipe_name is None:
+        print("❌ Recipe not found.")
         return
 
-    missing = []
+    recipe_needed = RECIPES[recipe_name]
 
-    # recipe_expected format: { 'Tomato': (2, 'pcs'), ... }
-    for req_name, req_info in recipe_needed.items():
-        try:
-            req_qty, req_unit = req_info
-        except Exception:
-            # skip invalid recipe entries
-            continue
+    missing_items = []
+    for req_name, req_quantity in recipe_needed.items():
 
-        have_qty = 0.0
-        # Find the matching ingredient in inventory
-        for ing in inventory:
-            if ing.name.lower() == req_name.lower() and ing.unit.lower() == req_unit.lower():
-                try:
-                    have_qty = float(ing.quantity)
-                except Exception:
-                    have_qty = 0.0
-                break # Found the item, stop searching
+        found = next((i for i in inventory if i.name.lower() == req_name.lower()), None)
 
-        if have_qty < req_qty:
-            missing.append((req_name, req_qty, req_unit, have_qty))
+        if not found:
+            missing_items.append((req_name, req_quantity, "Missing"))
+        elif found.quantity < req_quantity:
+            needed = req_quantity - found.quantity
+            missing_items.append((req_name, needed, found.unit))
 
-    if missing:
-        # Helper for consistent number formatting
-        def format_qty(q):
-            q = float(q)
-            return str(int(q)) if q.is_integer() else f"{q:.2f}"
+    if missing_items:
+        message_lines = ["❌ Insufficient stock for the recipe! Missing items:"]
+        for name, needed, unit in missing_items:
+            if unit == "Missing":
+                message_lines.append(f" - {name}: {needed} (completely missing)")
+            else:
+                message_lines.append(f" - {name}: need {needed} more {unit}")
+        message = "\n".join(message_lines)
+        raise InsufficientStockError(message)
 
-        # build a readable summary of shortages
-        lines = ["Missing or insufficient ingredients:"]
-        for name, need, unit, have in missing:
-            need_more = need - have
-            
-            have_str = format_qty(have)
-            need_more_str = format_qty(need_more)
-            need_str = format_qty(need)
-
-            lines.append(f" - {name}: need {need_str} {unit}, have {have_str} {unit} (need {need_more_str} more)")
-        
-        # Raise the custom exception as intended by the original script
-        raise InsufficientStockError("\n".join(lines))
-
-    print(f"You have all the ingredients for {recipe_name}.")
+    print(f"✅ All ingredients are available for '{recipe_name}'!")
 
 
 def main():
     """Main CLI loop: routes menu actions, catches recipe errors, saves on exit."""
     inventory = load_inventory()
-    print("\nWelcome to the Culinary Inventory Planner!")
+    print("\n  Welcome to the Culinary Inventory Planner!")
+
+    menu_options = {
+        "1": add_ingredient,
+        "2": view_inventory,
+        "3": check_recipe,
+        "4": "Exit"
+    }
 
     while True:
-        print("\nMenu:")
+        print("\nMain Menu:")
         print("1. Add Ingredient")
         print("2. View Inventory")
         print("3. Check Recipe")
         print("4. Exit")
-        choice = input("Enter your choice (1-4): ").strip
+
+        choice = input("Select an option (1–4): ").strip()
+
+        if choice not in menu_options:
+            print("❌ Invalid selection. Please choose between 1 and 4.")
+            continue
+
+        if choice == "4":
+            confirm = input("Are you sure you want to exit? (y/n): ").strip().lower()
+            if confirm == 'y':
+                save_inventory(inventory)
+                print("     Inventory saved. Goodbye!")
+                break
+            else:
+                print("     Returning to main menu.")
+                continue
+
+        action = menu_options[choice]
+        if action == check_recipe:
+            try:
+                action(inventory)
+            except InsufficientStockError as e:
+                print(e)
+        else:
+            try:
+                action(inventory)
+            except Exception as e:
+                print(f"     Unexpected error: {e}")
+
+
+if __name__ == "__main__":
+    main()
